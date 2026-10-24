@@ -1,5 +1,9 @@
 # VulnWatch 🛡️
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Container](https://img.shields.io/badge/Container-Podman%20%7C%20Docker-purple.svg)](docker-compose.yml)
+
 **VulnWatch** is a lightweight, automated vulnerability intelligence and alerting service designed for security engineers, sysadmins, and DevOps teams.
 
 It continuously monitors the **NIST National Vulnerability Database (NVD API 2.0)** and the **CISA Known Exploited Vulnerabilities (KEV)** catalog, filtering and delivering actionable security alerts directly to your **Telegram** (private chat or channel).
@@ -50,7 +54,8 @@ vulnwatch/
 ├── Dockerfile           # Minimal Python 3.11 container image
 ├── docker-compose.yml   # Hardened compose configuration
 ├── .env.example         # Template environment configuration
-└── requirements.txt     # Python dependencies (requests)
+├── requirements.txt     # Python dependencies (requests)
+└── LICENSE              # MIT Open Source License
 ```
 
 ---
@@ -323,6 +328,19 @@ curl -X POST http://localhost:8080/mcp \
 
 ---
 
-## 📄 License
+## 📄 Open Source License
 
-MIT License. Free for open-source and commercial use.
+This project is open-source software licensed under the **[MIT License](LICENSE)**.
+
+```text
+MIT License - Copyright (c) 2026 VulnWatch Contributors
+```
+
+### Key Permissions & Conditions:
+- ✅ **Commercial Use:** Allowed for personal, commercial, and enterprise applications.
+- ✅ **Modification:** Allowed to freely modify, adapt, and rewrite the code.
+- ✅ **Distribution:** Allowed to redistribute the original or modified source code and binaries.
+- ✅ **Private Use:** Allowed to run, modify, and host privately without mandatory source disclosure.
+- ℹ️ **Notice Required:** Retain the original copyright and permission notice in all copies or substantial portions of the software.
+
+For full license terms and conditions, see the [LICENSE](LICENSE) file.
