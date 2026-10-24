@@ -185,3 +185,14 @@ class NVDClient:
             time.sleep(6 if not self.api_key else 0.7)
 
         return results
+
+    def fetch_cve_by_id(self, cve_id: str) -> dict[str, Any] | None:
+        """Fetch a specific CVE from NVD by its CVE ID."""
+        try:
+            payload = self.request_json({"cveId": cve_id.strip().upper()})
+            vulnerabilities = payload.get("vulnerabilities", [])
+            if vulnerabilities and isinstance(vulnerabilities[0].get("cve"), dict):
+                return vulnerabilities[0]["cve"]
+        except Exception as exc:
+            log.warning("Could not fetch %s from NVD: %s", cve_id, exc)
+        return None

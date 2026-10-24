@@ -16,7 +16,9 @@ class TelegramNotifier:
         chat_id: str,
         app_name: str = "VulnWatch",
         session: requests.Session | None = None,
+        enabled: bool = True,
     ):
+        self.enabled = enabled
         self.bot_token = bot_token.strip().strip("'\"")
         self.chat_id = chat_id.strip().strip("'\"")
         self.app_name = app_name
@@ -24,11 +26,15 @@ class TelegramNotifier:
 
     @property
     def is_configured(self) -> bool:
-        """Check whether both bot token and recipient chat/user ID are provided."""
-        return bool(self.bot_token and self.chat_id)
+        """Check whether Telegram is enabled and credentials are provided."""
+        return self.enabled and bool(self.bot_token and self.chat_id)
 
     def send_message(self, message: str) -> bool:
         """Send a plain text message to the configured Telegram recipient."""
+        if not self.enabled:
+            log.debug("Telegram notifications are disabled (TELEGRAM_BOT_ENABLED=false).")
+            return False
+
         if not self.is_configured:
             log.warning("Telegram is not configured; message not sent")
             return False

@@ -69,10 +69,19 @@ class VulnWatchService:
 
             added = parse_date(item.get("dateAdded"))
             if added and added >= cutoff:
-                self.send_alert(
-                    cve_id,
-                    "CISA KEV: newly added known exploited vulnerability",
+                row = self.db.get_vulnerability(cve_id)
+                products = row["products"] if row else ""
+                desc = row["description"] if row else (item.get("shortDescription") or "")
+                reason = self.alerter.evaluate_reason(
+                    score=row["cvss"] if row else None,
+                    severity=row["severity"] if row else "UNKNOWN",
+                    is_kev=True,
+                    published_dt=parse_date(row["published"]) if row else None,
+                    products=products,
+                    description=desc,
                 )
+                if reason:
+                    self.send_alert(cve_id, reason)
 
         return recorded
 
@@ -153,6 +162,8 @@ class VulnWatchService:
                 severity=row["severity"],
                 is_kev=bool(row["kev"]),
                 published_dt=parse_date(row["published"]),
+                products=row["products"] or "",
+                description=row["description"] or "",
             )
             if reason:
                 self.send_alert(cve_id, reason)
@@ -163,12 +174,25 @@ class VulnWatchService:
         self.db.set_state("last_successful_sync", iso_utc(end))
         log.info("Sync complete; %d KEV entries newly recorded", recorded)
 
+    def get_poll_seconds(self) -> int:
+        """Get the effective polling interval (database override or default)."""
+        val = self.db.get_state("setting_poll_seconds")
+        if val:
+            try:
+                return max(60, int(val))
+            except ValueError:
+                pass
+        return self.config.poll_seconds
+
     def run_forever(self) -> None:
         """Run monitor loop continuously."""
         self.db.init_db()
 
         if not self.telegram.is_configured:
-            log.warning("Telegram credentials missing or incomplete; alerts disabled.")
+            if not self.config.telegram_bot_enabled:
+                log.info("Telegram alerts are disabled (TELEGRAM_BOT_ENABLED=false).")
+            else:
+                log.warning("Telegram credentials missing or incomplete; alerts disabled.")
 
         while True:
             try:
@@ -176,4 +200,4 @@ class VulnWatchService:
             except Exception:
                 log.exception("Sync failed; will retry on the next cycle")
 
-            time.sleep(self.config.poll_seconds)
+            time.sleep(self.get_poll_seconds())

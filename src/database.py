@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sqlite3
 from typing import Any
 
@@ -60,6 +61,12 @@ class Database:
                 )
             """)
             db.execute("""
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    keyword TEXT PRIMARY KEY,
+                    added_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_vuln_cvss
                 ON vulnerabilities(cvss)
             """)
@@ -85,8 +92,8 @@ class Database:
         """Fetch a single vulnerability record by CVE ID."""
         with self.connect() as db:
             return db.execute(
-                "SELECT * FROM vulnerabilities WHERE cve_id=?",
-                (cve_id,),
+                "SELECT * FROM vulnerabilities WHERE UPPER(cve_id)=UPPER(?)",
+                (cve_id.strip(),),
             ).fetchone()
 
     def is_alert_sent(self, cve_id: str) -> bool:
@@ -97,6 +104,125 @@ class Database:
                 (cve_id,),
             ).fetchone()
             return row is not None
+
+    def search_by_date(self, date_str: str, limit: int = 10) -> list[sqlite3.Row]:
+        """Search vulnerabilities by publication date string (YYYY-MM-DD)."""
+        with self.connect() as db:
+            return db.execute("""
+                SELECT cve_id, published, cvss, severity, description, products, kev
+                FROM vulnerabilities
+                WHERE published LIKE ? || '%'
+                ORDER BY COALESCE(cvss, 0) DESC, published DESC
+                LIMIT ?
+            """, (date_str, limit)).fetchall()
+
+    def get_latest_vulnerabilities(self, limit: int = 5) -> list[sqlite3.Row]:
+        """Get the most recently published vulnerabilities."""
+        with self.connect() as db:
+            return db.execute("""
+                SELECT cve_id, published, cvss, severity, description, products, kev
+                FROM vulnerabilities
+                ORDER BY published DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+
+    def get_vulnerabilities_by_severity(
+        self,
+        severity: str,
+        limit: int = 5,
+    ) -> list[sqlite3.Row]:
+        """Fetch latest vulnerabilities filtered by severity (CRITICAL, HIGH, MEDIUM, LOW)."""
+        sev = severity.strip().upper()
+        with self.connect() as db:
+            return db.execute("""
+                SELECT cve_id, published, cvss, severity, description, products, kev
+                FROM vulnerabilities
+                WHERE UPPER(severity) = ?
+                ORDER BY COALESCE(cvss, 0) DESC, published DESC
+                LIMIT ?
+            """, (sev, limit)).fetchall()
+
+    def get_latest_kev(self, limit: int = 5) -> list[sqlite3.Row]:
+        """Get the most recently added CISA KEV entries."""
+        with self.connect() as db:
+            return db.execute("""
+                SELECT cve_id, kev_added, kev_due, ransomware, description, products
+                FROM vulnerabilities
+                WHERE kev = 1
+                ORDER BY kev_added DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+
+    def get_stats(self) -> dict[str, Any]:
+        """Retrieve overview statistics from database."""
+        with self.connect() as db:
+            total_vulns = db.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
+            total_kev = db.execute("SELECT COUNT(*) FROM vulnerabilities WHERE kev = 1").fetchone()[0]
+            total_alerts = db.execute("SELECT COUNT(*) FROM sent_alerts").fetchone()[0]
+            total_watchlist = db.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0]
+            last_sync = self.get_state("last_successful_sync")
+            return {
+                "total_vulnerabilities": total_vulns,
+                "total_kev": total_kev,
+                "total_alerts": total_alerts,
+                "total_watchlist": total_watchlist,
+                "last_successful_sync": last_sync,
+            }
+
+    def add_to_watchlist(self, keyword: str) -> bool:
+        """Add a technology, framework, or vendor keyword to the watchlist."""
+        kw = keyword.strip().lower()
+        if not kw:
+            return False
+        with self.connect() as db:
+            try:
+                db.execute(
+                    "INSERT INTO watchlist (keyword, added_at) VALUES (?, ?)",
+                    (kw, iso_utc(now_utc())),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_from_watchlist(self, keyword: str) -> bool:
+        """Remove a technology keyword from the watchlist."""
+        kw = keyword.strip().lower()
+        with self.connect() as db:
+            cur = db.execute("DELETE FROM watchlist WHERE keyword = ?", (kw,))
+            return cur.rowcount > 0
+
+    def get_watchlist(self) -> list[str]:
+        """Retrieve all active technology keywords in the watchlist."""
+        with self.connect() as db:
+            rows = db.execute("SELECT keyword FROM watchlist ORDER BY keyword ASC").fetchall()
+            return [row["keyword"] for row in rows]
+
+    def clear_watchlist(self) -> int:
+        """Remove all keywords from the watchlist."""
+        with self.connect() as db:
+            cur = db.execute("DELETE FROM watchlist")
+            return cur.rowcount
+
+    def matches_watchlist(self, products: str = "", description: str = "") -> str | None:
+        """
+        Check if a vulnerability's products or description matches any watched keyword.
+        Returns the matched keyword, or None if no match.
+        """
+        keywords = self.get_watchlist()
+        if not keywords:
+            return None
+
+        p_lower = (products or "").lower()
+        d_lower = (description or "").lower()
+
+        for kw in keywords:
+            if kw in p_lower:
+                return kw
+            pattern = rf"(?:\b|_){re.escape(kw)}(?:\b|_)"
+            if re.search(pattern, d_lower):
+                return kw
+
+        return None
 
     def record_alert_sent(self, cve_id: str, reason: str) -> None:
         """Mark an alert as sent in the sent_alerts table."""

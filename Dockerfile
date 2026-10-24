@@ -17,4 +17,5 @@ COPY --chown=app app.py /app/app.py
 COPY --chown=app src/ /app/src/
 USER app
 VOLUME ["/data"]
+EXPOSE 8080
 ENTRYPOINT ["python", "-u", "/app/app.py"]

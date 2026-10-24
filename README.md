@@ -10,7 +10,10 @@ It continuously monitors the **NIST National Vulnerability Database (NVD API 2.0
 
 - **Real-Time & Future-Only Alerting:** Watches for newly published vulnerabilities (`pubStartDate`) without spamming you with thousands of re-indexed historical CVEs.
 - **CISA KEV Prioritization:** Highlights actively exploited vulnerabilities and ransomware associations with high-priority notifications.
+- **Interactive Telegram Bot Commands:** Query vulnerabilities on-demand (`/date`, `/cve`, `/critical`, `/high`, `/medium`) and adjust severity thresholds (`/rating`, `/set`) live from chat.
+- **Model Context Protocol (MCP) Server:** Allows AI assistants (Claude, Cursor, Antigravity, VS Code) to query your live vulnerability database and CVE intelligence.
 - **Customizable Filtering:**
+  - Dynamic severity rating thresholds (`/rating [critical|high|medium|all]`).
   - Minimum CVSS score thresholds (`MIN_CVSS`).
   - High-severity & KEV-only modes (`ONLY_HIGH_OR_KEV`).
   - Publication age filters (`MAX_CVE_AGE_DAYS`).
@@ -37,7 +40,9 @@ vulnwatch/
 │   ├── nvd.py           # NVD 2.0 API client & CVE parser (CVSS, CPE, CWE)
 │   ├── kev.py           # CISA Known Exploited Vulnerabilities catalog client
 │   ├── telegram.py      # Telegram Bot notifier & message formatter
-│   ├── alerter.py       # Alert filter and qualification logic
+│   ├── bot.py           # Interactive Telegram bot listener & command dispatcher
+│   ├── alerter.py       # Alert filter and dynamic qualification logic
+│   ├── mcp_server.py    # Model Context Protocol (MCP) server for AI agents
 │   ├── service.py       # Synchronization cycle & workflow orchestration
 │   ├── utils.py         # UTC ISO 8601 formatting & parsing helpers
 │   └── main.py          # Application bootstrapper
@@ -76,7 +81,7 @@ TELEGRAM_USER_ID=USER_NUMERIC_ID_OR_CHAT_ID
 NVD_API_KEY=
 
 # Filtering & Polling Controls
-POLL_SECONDS=900
+POLL_SECONDS=1800
 MIN_CVSS=7.0
 ONLY_HIGH_OR_KEV=false
 ONLY_NEWLY_PUBLISHED=true
@@ -111,15 +116,21 @@ podman compose logs -f
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
+| `TELEGRAM_BOT_ENABLED` | `true` | Master switch to enable or disable Telegram alerts and interactive bot listener (`true`/`false`). |
 | `TELEGRAM_BOT_TOKEN` | *(Required)* | Telegram bot token from `@BotFather`. |
 | `TELEGRAM_USER_ID` | *(Required)* | Recipient Telegram numeric user ID or chat ID. |
 | `NVD_API_KEY` | *(Optional)* | NIST NVD API key. Increases rate limit from 5 req/30s to 50 req/30s. |
-| `POLL_SECONDS` | `900` | Sync frequency in seconds (default: 15 minutes). Minimum: `60`. |
+| `POLL_SECONDS` | `1800` | Sync frequency in seconds (default: 30 minutes). Minimum: `60`. |
 | `MIN_CVSS` | `0` | Minimum CVSS score required to trigger an alert (e.g. `7.0`). |
 | `ONLY_HIGH_OR_KEV` | `false` | When `true`, alerts only for CVSS ≥ 7.0 or CISA KEV entries. |
 | `ONLY_NEWLY_PUBLISHED`| `true` | When `true`, queries newly published CVEs (`pubStartDate`) instead of modified CVEs. |
 | `START_FROM_NOW` | `true` | When `true`, starts monitoring from the current time forward (avoids past backlog). |
 | `MAX_CVE_AGE_DAYS` | `7` | Maximum publication age in days for a CVE to trigger an alert. |
+| `WATCHLIST` | *(Empty)* | Comma-separated list of software/frameworks to watch exclusively (e.g. `php,laravel,wordpress`). |
+| `RATING_FILTER` | *(Empty)* | Default severity rating filter (`critical`, `high`, `medium`, `all`). |
+| `MCP_ENABLED` | `false` | Enable the Model Context Protocol (MCP) server for AI assistants. |
+| `MCP_URL` | `http://localhost:8080` | External URL / port where the MCP server listens. |
+| `MCP_AUTH_TOKEN` | *(Optional)* | Secret Bearer authentication token protecting the MCP server. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 | `DB_PATH` | `/data/vulnwatch.sqlite3` | SQLite database file location inside the container. |
 
@@ -151,19 +162,151 @@ Verify affected versions against the vendor advisory.
 
 ## 🤖 Interactive Telegram Commands
 
-VulnWatch includes a built-in background bot listener that allows you to query vulnerabilities directly from Telegram:
+VulnWatch includes a built-in background bot listener that allows you to manage alerts and query vulnerabilities directly in Telegram:
 
+### Technology Watchlist (Targeted Software & Frameworks)
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `/date YYYY-MM-DD` | Search vulnerabilities published on a specific date (searches DB, then NVD). | `/date 2026-10-24` |
-| `/cve CVE-ID` | Detailed lookup for any CVE (queries local DB or NVD). | `/cve CVE-2026-115929` |
-| `/status` | View monitor health, last sync timestamp, and total indexed counts. | `/status` |
-| `/settings` | Inspect current threshold & filter configuration. | `/settings` |
-| `/latest` | List the 5 most recently published vulnerabilities. | `/latest` |
-| `/kev` | List the 5 most recent CISA Known Exploited Vulnerabilities. | `/kev` |
-| `/help` | Show available bot commands. | `/help` |
+| **`/watch_add <name>`** | **Add software, framework, or vendor to your watchlist.** When watchlist is active, VulnWatch **only** alerts on CVEs matching these technologies. | `/watch_add php` or `/watch_add laravel` |
+| **`/watch_delete <name>`** | Remove a software or framework from the watchlist. | `/watch_delete php` |
+| **`/watch_list`** | Display all currently monitored technologies in your watchlist. | `/watch_list` |
+| **`/watch_clear`** | Clear all watched items (reverts to monitoring all technologies). | `/watch_clear` |
+
+*(Note: `/wach_add`, `/wach_delete`, and `/wach_list` are also supported as aliases.)*
+
+### Severity Ratings & Dynamic Settings
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| **`/rating [type]`** | **View or change alert severity threshold live.** Options: `critical`, `high`, `medium`, `all`. Applies immediately to upcoming sync cycles. | `/rating critical` |
+| **`/set <key> <value>`** | **Update configuration on the fly.** Supported keys: `rating`, `cvss`, `poll`, `age`, `reset`. | `/set cvss 8.5` |
+| **`/settings`** | Inspect current active configuration & runtime overrides. | `/settings` |
+
+### Vulnerability Queries by Rating & Date
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| **`/critical`** | List the top recent **Critical** vulnerabilities (CVSS 9.0–10.0). | `/critical` |
+| **`/high`** | List the top recent **High** vulnerabilities (CVSS 7.0–8.9). | `/high` |
+| **`/medium`** | List the top recent **Medium** vulnerabilities (CVSS 4.0–6.9). | `/medium` |
+| **`/date YYYY-MM-DD`** | Search vulnerabilities published on a specific date (searches DB, then NVD). | `/date 2026-10-24` |
+| **`/cve CVE-ID`** | Detailed lookup for any CVE (queries local DB or NVD). | `/cve CVE-2026-115929` |
+| **`/latest`** | List the 5 most recently published vulnerabilities. | `/latest` |
+| **`/kev`** | List the 5 most recent CISA Known Exploited Vulnerabilities. | `/kev` |
+| **`/status`** | View monitor health, active rating filter, last sync time, and total counts. | `/status` |
+| **`/help`** | Show available bot commands. | `/help` |
 
 > 🔒 **Security:** The bot listener verifies message sender ID against `TELEGRAM_USER_ID` / `TELEGRAM_CHAT_ID` and rejects unauthorized users.
+
+---
+
+## 🧠 Model Context Protocol (MCP) Server for AI
+
+VulnWatch includes a built-in **MCP server** that implements the open [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) specification.
+
+---
+
+### What is the Model Context Protocol (MCP)?
+
+The **Model Context Protocol (MCP)** is an open industry standard that enables AI models and autonomous coding agents (such as **Claude Desktop**, **Cursor**, **Google Antigravity**, **VS Code Roo/Cline**, and **ChatGPT**) to safely connect to external data sources and execution environments.
+
+Think of MCP as a **standardized "USB-C" interface for AI applications**:
+- Instead of building custom plugins or copy-pasting vulnerability data into chats, the AI client directly queries VulnWatch via MCP tools.
+- It provides structured schema definitions so AI models know *what* questions they can ask and *how* to call functions.
+
+---
+
+### What Does the MCP Protocol Do in VulnWatch?
+
+By running the MCP server, VulnWatch turns your vulnerability monitor into an **active intelligence backend for your AI assistant**:
+
+1. **Eliminates AI Hallucinations on Security Data**
+   - AI models have a fixed knowledge training cutoff and cannot reliably remember newly published zero-days or recent CVE details.
+   - With VulnWatch MCP, when you ask your AI *"Is there an active exploit or ransomware campaign for CVE-2026-115929?"*, the AI calls `get_cve_details` or `get_cisa_kev_catalog` to retrieve verified, real-time facts from your local database and NIST NVD.
+
+2. **Automated Vulnerability Triage in Codebases**
+   - An AI coding assistant analyzing your project's dependencies can query VulnWatch directly to check whether a specific library version has any CVEs published today or this week.
+
+3. **Standardized Protocol Flow (JSON-RPC 2.0)**
+   - **Handshake (`initialize`)**: When the AI client connects, VulnWatch reports its server capabilities and metadata.
+   - **Tool Discovery (`tools/list`)**: VulnWatch presents its tools with strict JSON input schemas.
+   - **Execution (`tools/call`)**: When you ask a security question in natural language, the AI autonomously decides which tool to call, executes it against VulnWatch, and uses the returned structured context to formulate an accurate answer.
+
+---
+
+### Available MCP Tools for AI
+
+| Tool | Purpose | Parameters |
+| :--- | :--- | :--- |
+| **`search_cves_by_date`** | Search CVEs published on a specific date (`YYYY-MM-DD`). | `date` (string, required), `limit` (int) |
+| **`get_cve_details`** | Lookup comprehensive intelligence for a specific CVE ID. | `cve_id` (string, required) |
+| **`get_latest_vulnerabilities`** | Retrieve the most recent vulnerabilities. | `limit` (int, default 5) |
+| **`get_vulnerabilities_by_severity`** | Filter vulnerabilities by severity (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`). | `severity` (string, required), `limit` (int) |
+| **`get_cisa_kev_catalog`** | Query CISA Known Exploited Vulnerabilities catalog. | `limit` (int), `ransomware_only` (bool) |
+| **`get_watchlist`** | Retrieve all currently monitored software and framework keywords. | *None* |
+| **`add_to_watchlist`** | Add a technology to the monitored watchlist (e.g. `php`, `laravel`). | `keyword` (string, required) |
+| **`remove_from_watchlist`** | Remove a technology from the watchlist. | `keyword` (string, required) |
+| **`clear_watchlist`** | Clear all watchlist items (reverts to monitoring all software). | *None* |
+| **`set_rating_filter`** | Update alert severity threshold (`critical`, `high`, `medium`, `all`). | `rating` (string, required) |
+| **`get_settings`** | Retrieve all active configuration settings, thresholds, and overrides. | *None* |
+| **`set_setting`** | Update runtime setting (`min_cvss`, `poll_seconds`, `max_cve_age_days`, `rating`). | `key` (string), `value` (string) |
+| **`trigger_sync`** | Trigger an on-demand vulnerability synchronization cycle in the background. | *None* |
+| **`get_vulnwatch_status`** | Retrieve system sync cursor and statistics. | *None* |
+
+---
+
+### Configuration (`.env`)
+
+```env
+# Enable MCP Server
+MCP_ENABLED=true
+MCP_URL=http://localhost:8080
+MCP_AUTH_TOKEN="6adec69a0c7752f93dfacf468e9ef208fb72883b88dad7b97e39f03be68d05d0"
+```
+
+---
+
+### How to Connect Your AI Assistant
+
+#### Claude Desktop / Cursor / VS Code
+Add VulnWatch to your AI client's configuration file (e.g. `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "vulnwatch": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer 6adec69a0c7752f93dfacf468e9ef208fb72883b88dad7b97e39f03be68d05d0"
+      }
+    }
+  }
+}
+```
+
+#### Test with cURL
+```bash
+# 1. Server Health
+curl http://localhost:8080/health
+
+# 2. List Tools via MCP JSON-RPC
+curl -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer 6adec69a0c7752f93dfacf468e9ef208fb72883b88dad7b97e39f03be68d05d0" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
+
+# 3. Call a Tool (e.g. search date)
+curl -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer 6adec69a0c7752f93dfacf468e9ef208fb72883b88dad7b97e39f03be68d05d0" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "search_cves_by_date",
+      "arguments": {"date": "2026-10-24", "limit": 5}
+    }
+  }'
+```
 
 ---
 
