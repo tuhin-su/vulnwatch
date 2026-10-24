@@ -72,7 +72,27 @@ class TelegramBotListener:
         except Exception as exc:
             log.warning("Could not clear pending Telegram updates: %s", exc)
 
-        # 2. Register fresh VulnWatch commands list
+        # 2. Clear old commands across all scopes to remove legacy bot commands
+        scopes_to_clear = [
+            {"type": "default"},
+            {"type": "all_private_chats"},
+            {"type": "all_group_chats"},
+            {"type": "all_chat_administrators"},
+        ]
+        if self.config.telegram_user_id:
+            scopes_to_clear.append({"type": "chat", "chat_id": self.config.telegram_user_id})
+
+        for scope in scopes_to_clear:
+            try:
+                self.session.post(
+                    f"{base_url}/deleteMyCommands",
+                    json={"scope": scope},
+                    timeout=8,
+                )
+            except Exception:
+                pass
+
+        # 3. Register fresh VulnWatch commands list across default and all_private_chats
         commands = [
             {"command": "rating", "description": "View or set alert severity filter"},
             {"command": "critical", "description": "View latest Critical CVEs (CVSS 9.0+)"},
@@ -91,18 +111,20 @@ class TelegramBotListener:
             {"command": "help", "description": "Show command help menu"},
         ]
 
-        try:
-            res = self.session.post(
-                f"{base_url}/setMyCommands",
-                json={"commands": commands},
-                timeout=10,
-            )
-            if res.status_code == 200 and res.json().get("ok"):
-                log.info("Registered %d Telegram commands with Bot API.", len(commands))
-            else:
-                log.warning("Failed to register Telegram commands: %s", res.text)
-        except Exception as exc:
-            log.warning("Could not register Telegram commands: %s", exc)
+        target_scopes = [{"type": "default"}, {"type": "all_private_chats"}]
+        for scope in target_scopes:
+            try:
+                res = self.session.post(
+                    f"{base_url}/setMyCommands",
+                    json={"commands": commands, "scope": scope},
+                    timeout=10,
+                )
+                if res.status_code == 200 and res.json().get("ok"):
+                    log.info("Registered %d Telegram commands with Bot API (%s).", len(commands), scope["type"])
+                else:
+                    log.warning("Failed to register Telegram commands (%s): %s", scope["type"], res.text)
+            except Exception as exc:
+                log.warning("Could not register Telegram commands (%s): %s", scope["type"], exc)
 
     def start_in_background(self) -> None:
         """Launch the Telegram command polling loop in a background daemon thread."""
