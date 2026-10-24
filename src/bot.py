@@ -79,8 +79,9 @@ class TelegramBotListener:
             {"type": "all_group_chats"},
             {"type": "all_chat_administrators"},
         ]
-        if self.config.telegram_user_id:
-            scopes_to_clear.append({"type": "chat", "chat_id": self.config.telegram_user_id})
+        if self.config.telegram_chat_id:
+            chat_id_val = int(self.config.telegram_chat_id) if self.config.telegram_chat_id.lstrip("-").isdigit() else self.config.telegram_chat_id
+            scopes_to_clear.append({"type": "chat", "chat_id": chat_id_val})
 
         for scope in scopes_to_clear:
             try:
