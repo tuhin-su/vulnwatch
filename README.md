@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Linux](https://img.shields.io/badge/Linux-Debian%20%7C%20Ubuntu%20%7C%20RHEL%20%7C%20Arch-green.svg)](install.sh)
 [![Container](https://img.shields.io/badge/Container-Podman%20%7C%20Docker-purple.svg)](docker-compose.yml)
 
 **VulnWatch** is a lightweight, automated vulnerability intelligence and alerting service designed for security engineers, sysadmins, and DevOps teams.
@@ -51,6 +52,8 @@ vulnwatch/
 │   ├── utils.py         # UTC ISO 8601 formatting & parsing helpers
 │   └── main.py          # Application bootstrapper
 ├── app.py               # Main entrypoint
+├── install.sh           # System-wide native installer (Debian, Ubuntu, RHEL, Arch)
+├── uninstall.sh         # Clean uninstaller script
 ├── Dockerfile           # Minimal Python 3.11 container image
 ├── docker-compose.yml   # Hardened compose configuration
 ├── .env.example         # Template environment configuration
@@ -117,6 +120,97 @@ podman compose logs -f
 
 ---
 
+## 🐧 Native Linux Installation (No Docker Required)
+
+VulnWatch can be installed directly as a hardened, system-wide **systemd service** on any major Linux distribution using the automated [`install.sh`](install.sh) script.
+
+### Supported Distributions
+- **Debian / Ubuntu** (Debian 11+, Ubuntu 20.04+, Linux Mint, Pop!_OS, Kali)
+- **RHEL / Fedora Base** (RHEL 8/9/10, CentOS Stream, Rocky Linux, AlmaLinux, Fedora, Oracle Linux)
+- **Arch Linux** (Arch Linux, Manjaro, EndeavourOS)
+- **openSUSE / SLES**
+
+### System Directory Layout
+| Resource | Path | Description |
+| :--- | :--- | :--- |
+| **Application & Code** | `/opt/vulnwatch` | Application files, modules, and isolated Python venv (`/opt/vulnwatch/venv`) |
+| **Configuration** | `/etc/vulnwatch/vulnwatch.env` | Production configuration with restricted `0640` permissions |
+| **Database & State** | `/var/lib/vulnwatch/vulnwatch.sqlite3` | Persistent SQLite database in WAL mode |
+| **Logs** | `/var/log/vulnwatch/vulnwatch.log` | Persistent daemon log directory and log file |
+| **Log Rotation** | `/etc/logrotate.d/vulnwatch` | Automated weekly logrotate policy |
+| **Systemd Service** | `/etc/systemd/system/vulnwatch.service` | Hardened systemd unit running as unprivileged `vulnwatch` user |
+| **CLI Tool** | `/usr/local/bin/vulnwatch` | System-wide management command wrapper |
+
+### 1. Run Installer
+
+Clone the repository and run the installer with root privileges:
+
+```bash
+git clone https://github.com/tuhin-su/vulnwatch.git
+cd vulnwatch
+sudo bash install.sh
+```
+
+*(You can also run a pre-flight compatibility check first without making changes: `./install.sh --check`)*
+
+The installer automatically:
+1. Detects your distribution and installs OS dependencies (`python3`, `venv`, `pip`, `curl`).
+2. Creates an unprivileged system account (`vulnwatch`).
+3. Installs files to `/opt/vulnwatch` and configures an isolated Python virtual environment.
+4. Generates `/etc/vulnwatch/vulnwatch.env` with secure permissions (`0640`).
+5. Sets up and enables `vulnwatch.service` with strict sandboxing (`ProtectSystem=strict`, `NoNewPrivileges=true`).
+6. Installs the `vulnwatch` management CLI in `/usr/local/bin/vulnwatch`.
+
+### 2. Configure Telegram Credentials
+
+If you didn't enter credentials during the interactive prompt, edit the configuration anytime:
+
+```bash
+sudo vulnwatch config
+```
+
+Set your bot token and recipient ID:
+```env
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_USER_ID=YOUR_NUMERIC_ID
+```
+
+### 3. Service Management CLI
+
+VulnWatch includes a `vulnwatch` management tool:
+
+```bash
+vulnwatch status        # View live service status
+vulnwatch start         # Start the VulnWatch service
+vulnwatch stop          # Stop the VulnWatch service
+vulnwatch restart       # Restart service after configuration changes
+vulnwatch logs -f       # Follow live systemd journal logs
+vulnwatch log-file -f   # Follow standard file logs (/var/log/vulnwatch/vulnwatch.log)
+vulnwatch config        # Open /etc/vulnwatch/vulnwatch.env in your editor
+vulnwatch run           # Run in the foreground for live debugging
+vulnwatch version       # View installed version and file paths
+vulnwatch uninstall     # Cleanly remove VulnWatch from the system
+```
+
+You can also use standard Linux system commands:
+```bash
+sudo systemctl status vulnwatch
+sudo systemctl restart vulnwatch
+journalctl -u vulnwatch -f
+tail -f /var/log/vulnwatch/vulnwatch.log
+```
+
+### 4. Uninstallation
+
+To uninstall VulnWatch cleanly:
+```bash
+sudo vulnwatch uninstall
+# Or to purge all database records and configurations as well:
+sudo vulnwatch uninstall --purge
+```
+
+---
+
 ## ⚙️ Configuration Reference
 
 | Variable | Default | Description |
@@ -137,7 +231,8 @@ podman compose logs -f
 | `MCP_URL` | `http://localhost:8080` | External URL / port where the MCP server listens. |
 | `MCP_AUTH_TOKEN` | *(Optional)* | Secret Bearer authentication token protecting the MCP server. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
-| `DB_PATH` | `/data/vulnwatch.sqlite3` | SQLite database file location inside the container. |
+| `LOG_FILE` | *(Empty)* | Dedicated daemon log file path (e.g. `/var/log/vulnwatch/vulnwatch.log`). |
+| `DB_PATH` | `/data/vulnwatch.sqlite3` | SQLite database file location (`/var/lib/vulnwatch/vulnwatch.sqlite3` on native Linux). |
 
 ---
 

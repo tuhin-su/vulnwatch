@@ -33,6 +33,7 @@ class Config:
     mcp_port: int = 8080
 
     log_level: str = "INFO"
+    log_file: str = ""
     nvd_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     kev_url: str = (
         "https://www.cisa.gov/sites/default/files/feeds/"
@@ -81,6 +82,7 @@ class Config:
             mcp_host=os.getenv("MCP_HOST", "0.0.0.0").strip(),
             mcp_port=port,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            log_file=os.getenv("LOG_FILE", "").strip().strip("'\""),
             nvd_url=os.getenv(
                 "NVD_URL", "https://services.nvd.nist.gov/rest/json/cves/2.0"
             ).strip(),

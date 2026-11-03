@@ -1,4 +1,5 @@
 import logging
+import os
 
 from .alerter import AlertEvaluator
 from .bot import TelegramBotListener
@@ -14,9 +15,15 @@ from .telegram import TelegramNotifier
 def main() -> None:
     config = Config.from_env()
 
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if config.log_file:
+        os.makedirs(os.path.dirname(config.log_file) or ".", exist_ok=True)
+        handlers.append(logging.FileHandler(config.log_file, encoding="utf-8"))
+
     logging.basicConfig(
         level=config.log_level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        handlers=handlers,
     )
     log = logging.getLogger("vulnwatch")
     log.info("Starting %s monitor (poll=%ss, bootstrap=%sh)", config.app_name, config.poll_seconds, config.bootstrap_hours)
